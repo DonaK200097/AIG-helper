@@ -1,3 +1,4 @@
+using GHelper.AiMode;
 using GHelper.Ally;
 using GHelper.Battery;
 using GHelper.Display;
@@ -47,7 +48,7 @@ namespace GHelper
         {
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => Logger.WriteLine("Unhandled: " + e.ExceptionObject);
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => { Logger.WriteLine("Unhandled: " + e.ExceptionObject); AiModeHooks.Shutdown("unhandled"); };
             TaskScheduler.UnobservedTaskException += (s, e) => { Logger.WriteLine("Unobserved: " + e.Exception); e.SetObserved(); };
 
             string action = "";
@@ -144,6 +145,7 @@ namespace GHelper
 
             ScreenControl.InitScreen();
 
+            AiModeHooks.RecoverOnStartup();
             SetAutoModes(init: true);
 
             powerSettleTimer.Elapsed += OnPowerSettled;
@@ -228,6 +230,7 @@ namespace GHelper
 
         private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
         {
+            AiModeHooks.Shutdown("session end");
             gpuControl.StandardModeFix();
             modeControl.ShutdownReset();
             BatteryControl.AutoBattery();
@@ -396,6 +399,7 @@ namespace GHelper
             if (e.Mode == PowerModes.Suspend)
             {
                 Logger.WriteLine("Power Mode Changed:" + e.Mode.ToString());
+                AiModeHooks.Shutdown("suspend");
                 gpuControl.StandardModeFix();
                 modeControl.ShutdownReset();
                 InputDispatcher.ShutdownStatusLed();
@@ -467,6 +471,8 @@ namespace GHelper
 
         static void OnExit(object sender, EventArgs e)
         {
+            AiModeHooks.Shutdown("exit");
+
             if (trayIcon is not null)
             {
                 trayIcon.Visible = false;

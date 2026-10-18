@@ -1,3 +1,4 @@
+using GHelper.AiMode;
 using GHelper.Gpu.NVidia;
 using GHelper.Helpers;
 using GHelper.USB;
@@ -199,6 +200,8 @@ namespace GHelper.Mode
             // CPU Boost setting override
             if (AppConfig.GetMode("auto_boost") != -1)
                     PowerNative.SetCPUBoost(AppConfig.GetMode("auto_boost"));
+
+            AiModeHooks.OnModeChanged();
 
             settings.FansInit();
         }
