@@ -62,6 +62,27 @@ namespace GHelper.AiMode
         public int? LastEpp { get; private set; }
 
         /// <summary>
+        /// Cap and EPP the mode had before AI Mode touched it.
+        /// </summary>
+        public int OriginalCap => (int)(snapshot?.GetAC(FREQ_MAX) ?? NoLimit);
+        public int OriginalEpp => (int)(snapshot?.GetAC(EPP) ?? 0);
+
+        /// <summary>
+        /// True if someone else switched the scheme or changed values we wrote.
+        /// </summary>
+        public bool IsChangedExternally()
+        {
+            lock (planLock)
+            {
+                if (snapshot is null) return false;
+                if (power.GetActiveScheme() != snapshot.Scheme) return true;
+                if (LastCap is int cap && power.ReadAC(snapshot.Scheme, GUID_CPU, FREQ_MAX) is uint freq && freq != cap) return true;
+                if (LastEpp is int epp && power.ReadAC(snapshot.Scheme, GUID_CPU, EPP) is uint value && value != epp) return true;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Captures original values of the active scheme and persists them before anything is written.
         /// If ai_restore.json is still on disk (previous run did not restore), its values are the originals and win.
         /// </summary>
@@ -157,18 +178,21 @@ namespace GHelper.AiMode
                 if (capMhz is not null)
                 {
                     int cap = ClampCap(capMhz.Value);
-                    ok &= WriteIfChanged(FREQ_MAX, (uint)cap, ref changed);
-                    ok &= WriteIfChanged(FREQ_MAX_1, (uint)cap, ref changed);
-                    LastCap = cap;
+                    bool written = WriteIfChanged(FREQ_MAX, (uint)cap, ref changed);
+                    written &= WriteIfChanged(FREQ_MAX_1, (uint)cap, ref changed);
+                    // Only what actually landed counts, otherwise a failed write looks like an external change
+                    if (written) LastCap = cap;
+                    ok &= written;
                 }
 
                 if (epp is not null)
                 {
                     int modeEpp = (int)(snapshot.GetAC(EPP) ?? 0);
                     int value = ClampEpp(epp.Value, modeEpp);
-                    ok &= WriteIfChanged(EPP, (uint)value, ref changed);
-                    ok &= WriteIfChanged(EPP_1, (uint)value, ref changed);
-                    LastEpp = value;
+                    bool written = WriteIfChanged(EPP, (uint)value, ref changed);
+                    written &= WriteIfChanged(EPP_1, (uint)value, ref changed);
+                    if (written) LastEpp = value;
+                    ok &= written;
                 }
 
                 if (changed && !power.SetActiveScheme(snapshot.Scheme))

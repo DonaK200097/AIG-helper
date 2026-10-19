@@ -324,7 +324,7 @@ namespace GHelper.Mode
 
         public void SetModeLabel()
         {
-            settings.SetModeLabel(Properties.Strings.PerformanceMode + ": " + Modes.GetCurrentName() + (customFans ? "+" : "") + ((customPower > 0) ? " " + customPower + "W" : ""));
+            settings.SetModeLabel(Properties.Strings.PerformanceMode + ": " + Modes.GetCurrentName() + (customFans ? "+" : "") + ((customPower > 0) ? " " + customPower + "W" : "") + AiModeHooks.ModeLabelSuffix);
         }
 
         public void SetRyzenPower(bool init = false)

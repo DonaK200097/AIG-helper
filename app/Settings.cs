@@ -1,4 +1,5 @@
 ﻿using GHelper.Ally;
+using GHelper.AiMode;
 using GHelper.AnimeMatrix;
 using GHelper.AutoUpdate;
 using GHelper.Battery;
@@ -759,6 +760,7 @@ namespace GHelper
             if (m.Msg == NativeMethods.WM_POWERBROADCAST && m.WParam == (IntPtr)NativeMethods.PBT_APMRESUMEAUTOMATIC)
             {
                 Logger.WriteLine("System Resume");
+                AiModeHooks.OnResume();
                 GPUModeControl.suspended = false;
                 BatteryControl.AutoBattery();
                 m.Result = (IntPtr)1;

@@ -11,6 +11,11 @@
   <ItemGroup>
     <Compile Include="..\..\app\AiMode\IPowerSettings.cs" Link="AiMode\IPowerSettings.cs" />
     <Compile Include="..\..\app\AiMode\AiPowerPlan.cs" Link="AiMode\AiPowerPlan.cs" />
+    <Compile Include="..\..\app\AiMode\AiTelemetry.cs" Link="AiMode\AiTelemetry.cs" />
+    <Compile Include="..\..\app\AiMode\AiSettings.cs" Link="AiMode\AiSettings.cs" />
+    <Compile Include="..\..\app\AiMode\ZonePiPolicy.cs" Link="AiMode\ZonePiPolicy.cs" />
+    <Compile Include="..\..\app\AiMode\AiLogger.cs" Link="AiMode\AiLogger.cs" />
+    <Compile Include="..\..\app\AiMode\AiController.cs" Link="AiMode\AiController.cs" />
   </ItemGroup>
 
   <ItemGroup>

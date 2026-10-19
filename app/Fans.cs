@@ -1,4 +1,5 @@
 ﻿using GHelper.Fan;
+using GHelper.AiMode;
 using GHelper.Gpu.NVidia;
 using GHelper.Helpers;
 using GHelper.Mode;
@@ -42,6 +43,8 @@ namespace GHelper
         static bool isGPUPower => gpuPowerBase > 0;
         static bool clampFanDots = AppConfig.IsClampFanDots();
 
+        AiModePanel? aiPanel;
+
         public Fans()
         {
 
@@ -81,6 +84,8 @@ namespace GHelper
             labelHysteresisDown.Text = Properties.Strings.HysteresisDown;
             buttonReadLimits.Text = Properties.Strings.ReadLimits;
             buttonDownload.Text = Properties.Strings.InstallPawnIODriver;
+
+            aiPanel = AiModePanel.Attach(this, panelPower);
 
             InitTheme(true);
 
@@ -1116,6 +1121,8 @@ namespace GHelper
             trackCPUTemp.AccessibleName = labelLeftCPUTemp.Text;
 
             SavePower();
+
+            aiPanel?.Init();
 
         }
 
