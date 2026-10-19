@@ -83,6 +83,73 @@ namespace GHelper.AiMode
         }
 
         /// <summary>
+        /// What changed externally, for the log. Null if nothing.
+        /// </summary>
+        public string? DescribeExternalChange()
+        {
+            lock (planLock)
+            {
+                if (snapshot is null) return null;
+                Guid? active = power.GetActiveScheme();
+                if (active != snapshot.Scheme) return $"active scheme {snapshot.Scheme} -> {active}";
+
+                var changes = new List<string>();
+                foreach (var setting in Controlled)
+                {
+                    int? ours = setting == FREQ_MAX || setting == FREQ_MAX_1 ? LastCap : LastEpp;
+                    if (ours is null || snapshot.GetAC(setting) is null) continue;
+                    uint? now = power.ReadAC(snapshot.Scheme, GUID_CPU, setting);
+                    if (now != ours) changes.Add($"{Name(setting)} {ours} -> {now?.ToString() ?? "-"}");
+                }
+                return changes.Count > 0 ? string.Join(", ", changes) : null;
+            }
+        }
+
+        /// <summary>
+        /// Accepts an external change instead of fighting it.
+        /// Scheme switched: the old scheme gets its originals back and the new one is snapshotted.
+        /// Values changed: the new values become the originals to restore later.
+        /// </summary>
+        public bool Rebase()
+        {
+            lock (planLock)
+            {
+                if (snapshot is null) return TakeSnapshot();
+
+                Guid? active = power.GetActiveScheme();
+                if (active != snapshot.Scheme)
+                {
+                    WriteBack(snapshot);
+                    snapshot = null;
+                    LastCap = LastEpp = null;
+                    DeleteRestoreFile();
+                    return TakeSnapshot();
+                }
+
+                foreach (var setting in Controlled)
+                {
+                    int? ours = setting == FREQ_MAX || setting == FREQ_MAX_1 ? LastCap : LastEpp;
+                    if (ours is null || !snapshot.Values.TryGetValue(setting, out var value) || value.Ac is null) continue;
+                    uint? now = power.ReadAC(snapshot.Scheme, GUID_CPU, setting);
+                    if (now is uint v && v != ours) value.Ac = v;
+                }
+
+                LastCap = LastEpp = null;
+                try
+                {
+                    SaveRestoreFile(snapshot);
+                }
+                catch (Exception ex)
+                {
+                    log("AI Plan: can't update restore file: " + ex.Message);
+                }
+
+                log("AI Plan: rebased " + Describe(snapshot));
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Captures original values of the active scheme and persists them before anything is written.
         /// If ai_restore.json is still on disk (previous run did not restore), its values are the originals and win.
         /// </summary>

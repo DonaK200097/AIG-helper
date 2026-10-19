@@ -9,7 +9,7 @@ namespace GHelper.AiMode
     /// </summary>
     public class AiLogger : IDisposable
     {
-        public const string Header = "ts,cpu_temp,gpu_temp,gpu_power,gpu_util,cpu_fan,gpu_fan,cpu_util,cpu_freq_eff,cpu_power,mode,on_ac,cap_mhz,epp,zone,policy,pred_temp,read_ms";
+        public const string Header = "ts,cpu_temp,gpu_temp,gpu_power,gpu_util,cpu_fan,gpu_fan,cpu_util,cpu_freq_eff,cpu_power,mode,on_ac,cap_mhz,epp,zone,policy,pred_temp,read_ms,ceiling_mhz";
 
         public const long MaxBytes = 50L * 1024 * 1024;
         public const int KeepFiles = 20;
@@ -59,7 +59,8 @@ namespace GHelper.AiMode
             sb.Append(s.Zone).Append(',');
             sb.Append(s.Policy).Append(',');
             Num(sb, s.PredTemp);
-            sb.Append(s.ReadMs);
+            sb.Append(s.ReadMs).Append(',');
+            if (s.CeilingMhz is int ceiling) sb.Append(ceiling);
             return sb.ToString();
         }
 

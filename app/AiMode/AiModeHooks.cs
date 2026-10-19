@@ -6,7 +6,7 @@ namespace GHelper.AiMode
 {
     /// <summary>
     /// Entry points called from existing G-Helper code. Keeps upstream files to one-line hooks.
-    /// Per mode: ai_mode_N (on/off), ai_target_N, ai_offset_N. Global: ai_log, ai_explore, regulator coefficients.
+    /// Per mode: ai_mode_N (on/off), ai_target_N, ai_offset_N, ai_min_mhz_N, ai_target_mhz_N. Global: ai_log, ai_explore, regulator coefficients.
     /// Debug: ai_debug_cap / ai_debug_epp apply fixed values while AI Mode is off for the mode.
     /// </summary>
     internal static class AiModeHooks
@@ -15,6 +15,8 @@ namespace GHelper.AiMode
         static readonly Guid OVERLAY_TURBO = new("ded574b5-45a0-4f42-8737-46345c09c238");
 
         const int ResumeDelayMs = 5000;
+        // G-Helper applies fans and power limits ~1-3.5 s after a mode switch, and firmware may rewrite the plan after that
+        static int ModeDelayMs => Math.Clamp(AppConfig.Get("ai_mode_delay", 5000), 0, 30000);
 
         static readonly Lazy<AiPowerPlan> _plan = new(() =>
             new AiPowerPlan(new PowrProfSettings(), Path.Combine(Logger.appPath, "ai_restore.json"), Logger.WriteLine));
@@ -44,11 +46,16 @@ namespace GHelper.AiMode
         public static AiSettings LoadSettings()
         {
             var (target, offset) = AiSettings.Normalize(AppConfig.GetMode("ai_target", 87), AppConfig.GetMode("ai_offset", 5));
+            var (minMhz, targetMhz) = AiSettings.NormalizeFreq(AppConfig.GetMode("ai_min_mhz", 3000), AppConfig.GetMode("ai_target_mhz", 4400));
             var d = new AiSettings();
             return new AiSettings
             {
                 Target = target,
                 Offset = offset,
+                MinMhz = minMhz,
+                TargetMhz = targetMhz,
+                LightUtil = AppConfig.Get("ai_light_util", (int)d.LightUtil),
+                HeavyUtil = AppConfig.Get("ai_heavy_util", (int)d.HeavyUtil),
                 Kp = AppConfig.Get("ai_kp", (int)d.Kp),
                 Ki = AppConfig.Get("ai_ki", (int)d.Ki),
                 ColdStep = AppConfig.Get("ai_cold_step", d.ColdStep),
@@ -109,6 +116,7 @@ namespace GHelper.AiMode
                     {
                         long sinceResume = Environment.TickCount64 - resumedAt;
                         int delay = resumedAt > 0 && sinceResume < ResumeDelayMs ? (int)(ResumeDelayMs - sinceResume) : 0;
+                        if (active) delay = Math.Max(delay, ModeDelayMs);
                         Controller.Start(LoadSettings(), active, log ? LogDir : null, delay);
                     }
                 }

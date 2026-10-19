@@ -7,7 +7,7 @@ namespace GHelper.AiMode
     /// </summary>
     public readonly record struct AiPlanState(int CapMhz, int Epp, int ModeEpp);
 
-    public readonly record struct AiDecision(int CapMhz, int Epp, AiZone Zone, bool Idle, int NextTickMs);
+    public readonly record struct AiDecision(int CapMhz, int Epp, AiZone Zone, bool Idle, int NextTickMs, int CeilingMhz = AiPowerPlan.NoLimit);
 
     public interface IAiPolicy
     {
@@ -19,6 +19,8 @@ namespace GHelper.AiMode
     /// <summary>
     /// Zone regulator. Below T-3 the cap climbs, between T-3 and T+Δ a PI loop holds T,
     /// above T+Δ the cap drops hard and EPP rises, at 98 °C (or fast rise in aggressive zone) it jumps to the emergency cap.
+    /// The cap stays between the minimum frequency and a load ceiling: "no limit" under light load,
+    /// the target frequency under heavy all-core load. Only the emergency zone goes below the minimum.
     /// PI is in velocity form: the cap itself is the integrator, so it's frozen outside the working zone
     /// and can't wind up beyond the cap range.
     /// </summary>
@@ -27,6 +29,7 @@ namespace GHelper.AiMode
         private AiSettings settings;
 
         private double? ema;
+        private double? utilEma;
         private AiZone zone = AiZone.Working;
         private bool zoneKnown;
         private double? prevError;
@@ -44,12 +47,14 @@ namespace GHelper.AiMode
 
         public AiZone Zone => zone;
         public double? SmoothedTemp => ema;
+        public double? SmoothedUtil => utilEma;
 
         public void UpdateSettings(AiSettings newSettings) => settings = newSettings;
 
         public void Reset()
         {
             ema = null;
+            utilEma = null;
             zone = AiZone.Working;
             zoneKnown = false;
             prevError = null;
@@ -67,6 +72,8 @@ namespace GHelper.AiMode
             lastTs = sample.Ts;
 
             ema = ema is null ? t : s.EmaAlpha * t + (1 - s.EmaAlpha) * ema.Value;
+            if (sample.CpuUtil is float u) utilEma = utilEma is null ? u : s.EmaAlpha * u + (1 - s.EmaAlpha) * utilEma.Value;
+            double ceiling = s.LoadCeiling(utilEma);
 
             double rise = 0;
             var before = history.At(sample.Ts, 900);
@@ -127,14 +134,17 @@ namespace GHelper.AiMode
             else
                 gpuCompensated = 0;
 
-            cap = Math.Clamp(cap, AiPowerPlan.MinCapMhz, s.MaxMhz);
+            if (!idle) cap = Math.Min(cap, ceiling);
+            double floor = zone == AiZone.Emergency ? AiPowerPlan.MinCapMhz : Math.Max(AiPowerPlan.MinCapMhz, s.MinMhz);
+            cap = Math.Clamp(cap, floor, s.MaxMhz);
             capExact = cap;
 
             int capOut = cap >= s.MaxMhz ? AiPowerPlan.NoLimit : AiPowerPlan.ClampCap((int)Math.Round(cap));
             int eppOut = AiPowerPlan.ClampEpp(epp, state.ModeEpp);
             int next = zone is AiZone.Aggressive or AiZone.Emergency ? s.FastTickMs : s.TickMs;
 
-            return new AiDecision(capOut, eppOut, zone, idle && zone != AiZone.Emergency, next);
+            int ceilingOut = ceiling >= s.MaxMhz ? AiPowerPlan.NoLimit : AiPowerPlan.ClampCap((int)Math.Round(ceiling));
+            return new AiDecision(capOut, eppOut, zone, idle && zone != AiZone.Emergency, next, ceilingOut);
         }
 
         private AiZone NextZone(double raw, double smooth, double rise)
@@ -221,9 +231,10 @@ namespace GHelper.AiMode
 
             if (sample.Ts >= until)
             {
-                int steps = (settings.MaxMhz - AiPowerPlan.MinCapMhz) / AiPowerPlan.CapStepMhz;
+                int low = Math.Max(AiPowerPlan.MinCapMhz, settings.MinMhz);
+                int steps = (settings.MaxMhz - low) / AiPowerPlan.CapStepMhz;
                 int pick = random.Next(steps + 2);
-                target = pick > steps ? AiPowerPlan.NoLimit : AiPowerPlan.MinCapMhz + pick * AiPowerPlan.CapStepMhz;
+                target = pick > steps ? AiPowerPlan.NoLimit : low + pick * AiPowerPlan.CapStepMhz;
                 until = sample.Ts + random.Next(settings.ExploreMinSec, settings.ExploreMaxSec + 1) * 1000L;
             }
 

@@ -11,8 +11,21 @@ namespace GHelper.AiMode
         public const int MaxOffset = 10;
         public const int MaxThreshold = 100;
 
+        public const int MinFreqLow = 1800;
+        public const int MinFreqHigh = 4400;
+        public const int TargetFreqLow = 3000;
+        public const int TargetFreqHigh = 5400;
+
         public int Target { get; set; } = 87;
         public int Offset { get; set; } = 5;
+
+        // Frequency range for the regulator (UI, per mode). Emergency zone may still go below MinMhz.
+        public int MinMhz { get; set; } = 3000;
+        public int TargetMhz { get; set; } = 4400;
+
+        // CPU load → ceiling: at or below LightUtil the ceiling is "no limit", at or above HeavyUtil it's TargetMhz
+        public double LightUtil { get; set; } = 30;
+        public double HeavyUtil { get; set; } = 70;
 
         // Zones
         public int ColdMargin { get; set; } = 3;
@@ -62,6 +75,32 @@ namespace GHelper.AiMode
             offset = Math.Clamp(offset, MinOffset, MaxOffset);
             if (target + offset > MaxThreshold) offset = MaxThreshold - target;
             return (target, offset);
+        }
+
+        /// <summary>
+        /// Clamps frequencies to the UI ranges; the minimum can't exceed the target frequency.
+        /// </summary>
+        public static (int min, int target) NormalizeFreq(int min, int target)
+        {
+            target = Round(Math.Clamp(target, TargetFreqLow, TargetFreqHigh));
+            min = Round(Math.Clamp(min, MinFreqLow, MinFreqHigh));
+            if (min > target) min = target;
+            return (min, target);
+        }
+
+        static int Round(int mhz) => (int)Math.Round(mhz / 100.0, MidpointRounding.AwayFromZero) * 100;
+
+        /// <summary>
+        /// Highest cap allowed for this CPU load. Unknown load counts as heavy.
+        /// </summary>
+        public double LoadCeiling(double? util)
+        {
+            double top = MaxMhz;
+            double heavy = Math.Min(TargetMhz, MaxMhz);
+            if (util is not double u) return heavy;
+            if (u <= LightUtil) return top;
+            if (u >= HeavyUtil || HeavyUtil <= LightUtil) return heavy;
+            return top - (top - heavy) * (u - LightUtil) / (HeavyUtil - LightUtil);
         }
     }
 }

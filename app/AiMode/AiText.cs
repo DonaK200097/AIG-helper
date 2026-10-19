@@ -16,6 +16,10 @@ namespace GHelper.AiMode
         public static string Target => T("Target temperature", "Целевая температура");
         public static string Offset => T("Offset", "Офсет");
         public static string AggressiveAbove(int t) => T($"aggressive above {t}°C", $"агрессивно выше {t}°C");
+        public static string MinFreq => T("Minimum frequency", "Минимальная частота");
+        public static string TargetFreq => T("Target frequency (heavy load)", "Целевая частота (под нагрузкой)");
+        public static string Load => T("load", "загрузка");
+        public static string Ceiling => T("Load limit", "Лимит по нагрузке");
         public static string Log => T("Record telemetry log", "Запись лога телеметрии");
         public static string OpenLogs => T("Logs", "Логи");
 
@@ -49,7 +53,8 @@ namespace GHelper.AiMode
             "battery" => T("on battery", "от батареи"),
             "sensor" => T("no CPU temperature", "нет температуры CPU"),
             "snapshot" => T("can't read power plan", "не читается план питания"),
-            "conflict" => T("plan changed by another program", "план изменён другой программой"),
+            "conflict" => T("plan keeps being changed by another program", "план постоянно меняет другая программа"),
+            "starting" => T("starting…", "запуск…"),
             "write errors" => T("power plan write errors", "ошибки записи плана"),
             "Armoury Crate" => "Armoury Crate",
             _ => reason,

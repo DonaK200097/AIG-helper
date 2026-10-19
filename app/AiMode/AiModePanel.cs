@@ -16,6 +16,11 @@ namespace GHelper.AiMode
         readonly Label labelTargetValue = new();
         readonly Label labelOffsetValue = new();
         readonly Label labelOffsetTitle = new();
+        // Frequency sliders work in 100 MHz units
+        readonly RTrackBar trackMinFreq = new();
+        readonly RTrackBar trackTargetFreq = new();
+        readonly Label labelMinFreqValue = new();
+        readonly Label labelTargetFreqValue = new();
         readonly Label labelStatus = new();
         readonly RCheckBox checkLog = new();
         readonly RButton buttonLogs = new();
@@ -50,7 +55,9 @@ namespace GHelper.AiMode
 
             // Added bottom to top, as the designer does for DockStyle.Top
             Controls.Add(Row("panelAiLog", 76, 15, LogRow()));
-            Controls.Add(Row("panelAiStatus", 84, 0, StatusRow()));
+            Controls.Add(Row("panelAiStatus", 124, 0, StatusRow()));
+            Controls.Add(Slider("panelAiMinFreq", new Label { Text = AiText.MinFreq }, labelMinFreqValue, trackMinFreq, AiSettings.MinFreqLow / 100, AiSettings.MinFreqHigh / 100, 2));
+            Controls.Add(Slider("panelAiTargetFreq", new Label { Text = AiText.TargetFreq }, labelTargetFreqValue, trackTargetFreq, AiSettings.TargetFreqLow / 100, AiSettings.TargetFreqHigh / 100, 2));
             Controls.Add(Slider("panelAiOffset", labelOffsetTitle, labelOffsetValue, trackOffset, AiSettings.MinOffset, AiSettings.MaxOffset, 1));
             Controls.Add(Slider("panelAiTarget", new Label { Text = AiText.Target }, labelTargetValue, trackTarget, AiSettings.MinTarget, AiSettings.MaxTarget, 5));
             Controls.Add(Row("panelAiEnable", 76, 15, CheckBox(checkEnable, AiText.Enable)));
@@ -62,7 +69,9 @@ namespace GHelper.AiMode
 
             trackTarget.Scroll += (_, _) => SliderScroll(trackTarget);
             trackOffset.Scroll += (_, _) => SliderScroll(trackOffset);
-            foreach (var track in new[] { trackTarget, trackOffset })
+            trackMinFreq.Scroll += (_, _) => SliderScroll(trackMinFreq);
+            trackTargetFreq.Scroll += (_, _) => SliderScroll(trackTargetFreq);
+            foreach (var track in new[] { trackTarget, trackOffset, trackMinFreq, trackTargetFreq })
             {
                 track.MouseUp += (_, _) => SaveSliders();
                 track.KeyUp += (_, _) => SaveSliders();
@@ -79,6 +88,11 @@ namespace GHelper.AiMode
             var (target, offset) = AiSettings.Normalize(AppConfig.GetMode("ai_target", 87), AppConfig.GetMode("ai_offset", 5));
             trackTarget.Value = target;
             trackOffset.Value = offset;
+
+            var (minMhz, targetMhz) = AiSettings.NormalizeFreq(AppConfig.GetMode("ai_min_mhz", 3000), AppConfig.GetMode("ai_target_mhz", 4400));
+            trackMinFreq.Value = minMhz / 100;
+            trackTargetFreq.Value = targetMhz / 100;
+
             checkEnable.Checked = AiModeHooks.IsEnabled();
             checkLog.Checked = AppConfig.Is("ai_log");
 
@@ -136,6 +150,13 @@ namespace GHelper.AiMode
             if (source == trackOffset && offset != trackOffset.Value) trackOffset.Value = offset;
             if (source == trackTarget && offset != trackOffset.Value) trackOffset.Value = offset;
 
+            // Minimum frequency can't be above the target frequency: the other slider follows
+            if (trackMinFreq.Value > trackTargetFreq.Value)
+            {
+                if (source == trackMinFreq) trackTargetFreq.Value = trackMinFreq.Value;
+                else trackMinFreq.Value = trackTargetFreq.Value;
+            }
+
             VisualiseSliders();
         }
 
@@ -145,6 +166,10 @@ namespace GHelper.AiMode
             var (target, offset) = AiSettings.Normalize(trackTarget.Value, trackOffset.Value);
             AppConfig.SetMode("ai_target", target);
             AppConfig.SetMode("ai_offset", offset);
+
+            var (minMhz, targetMhz) = AiSettings.NormalizeFreq(trackMinFreq.Value * 100, trackTargetFreq.Value * 100);
+            AppConfig.SetMode("ai_min_mhz", minMhz);
+            AppConfig.SetMode("ai_target_mhz", targetMhz);
             AiModeHooks.OnSettingsChanged();
         }
 
@@ -154,7 +179,10 @@ namespace GHelper.AiMode
             labelOffsetValue.Text = "+" + trackOffset.Value + "°";
             labelOffsetTitle.Text = AiText.Offset + " · " + AiText.AggressiveAbove(trackTarget.Value + trackOffset.Value);
 
-            trackTarget.Enabled = trackOffset.Enabled = checkEnable.Checked;
+            labelMinFreqValue.Text = trackMinFreq.Value * 100 + " " + AiText.MHz;
+            labelTargetFreqValue.Text = trackTargetFreq.Value * 100 + " " + AiText.MHz;
+
+            trackTarget.Enabled = trackOffset.Enabled = trackMinFreq.Enabled = trackTargetFreq.Enabled = checkEnable.Checked;
         }
 
         void UpdateStatus()
@@ -171,20 +199,24 @@ namespace GHelper.AiMode
             {
                 var s = AiModeHooks.Controller.Status;
                 string temp = s.CpuTemp is float t ? " · " + TempHelper.FormatTemp((int)Math.Round(t)) : "";
+                string load = s.CpuUtil is float u ? $" · {AiText.Load} {Math.Round(u)}%" : "";
 
                 text = s.State switch
                 {
                     AiRunState.Active =>
-                        $"{AiText.Source}: {(s.Policy == "explore" ? AiText.Explore : AiText.Regulator)} · {AiText.Zone(s.Zone, s.Idle)}{temp}\n" +
-                        $"{AiText.Cap}: {(s.CapMhz is null or 0 ? AiText.NoLimit : s.CapMhz + " " + AiText.MHz)} · EPP {s.Epp}",
+                        $"{AiText.Source}: {(s.Policy == "explore" ? AiText.Explore : AiText.Regulator)} · {AiText.Zone(s.Zone, s.Idle)}{temp}{load}\n" +
+                        $"{AiText.Cap}: {Mhz(s.CapMhz)} · EPP {s.Epp}\n" +
+                        $"{AiText.Ceiling}: {Mhz(s.CeilingMhz)}",
                     AiRunState.Paused => $"{AiText.Paused}: {AiText.Reason(s.Reason)}{temp}",
-                    AiRunState.LogOnly => $"{AiText.LogOnly}{temp}",
+                    AiRunState.LogOnly => $"{AiText.LogOnly}{temp}{load}",
                     _ => s.Reason is "conflict" or "write errors" ? $"{AiText.Stopped}: {AiText.Reason(s.Reason)}" : AiText.Off,
                 };
             }
 
             if (labelStatus.Text != text) labelStatus.Text = text;
         }
+
+        static string Mhz(int? mhz) => mhz is null or 0 ? AiText.NoLimit : mhz + " " + AiText.MHz;
 
         Panel Title()
         {
@@ -237,7 +269,7 @@ namespace GHelper.AiMode
         Control[] StatusRow()
         {
             labelStatus.Location = new Point(10, 4);
-            labelStatus.Size = new Size(500, 76);
+            labelStatus.Size = new Size(500, 116);
             labelStatus.Text = AiText.Off;
             return [labelStatus];
         }

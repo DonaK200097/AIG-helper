@@ -12,6 +12,8 @@ namespace GHelper.AiMode
         public int? CapMhz { get; init; }
         public int? Epp { get; init; }
         public float? CpuTemp { get; init; }
+        public float? CpuUtil { get; init; }
+        public int? CeilingMhz { get; init; }
         public string? LogFile { get; init; }
     }
 
@@ -34,7 +36,9 @@ namespace GHelper.AiMode
     public class AiController
     {
         public const int MaxBadTemp = 3;
+        // External changes are accepted (rebase); this many within the window means a fight, then we stop
         public const int MaxConflicts = 3;
+        public const int ConflictWindowMs = 60000;
         public const int MaxWriteErrors = 5;
         public const float MinValidTemp = 0;
         public const float MaxValidTemp = 110;
@@ -56,7 +60,8 @@ namespace GHelper.AiMode
         private bool active;
         private bool paused;
         private string pauseReason = "";
-        private int badTemp, conflicts, writeErrors;
+        private int badTemp, writeErrors;
+        private readonly Queue<long> conflicts = new();
 
         private Thread? thread;
         private CancellationTokenSource? cts;
@@ -96,7 +101,8 @@ namespace GHelper.AiMode
                 active = activeMode;
                 paused = false;
                 pauseReason = "";
-                badTemp = conflicts = writeErrors = 0;
+                badTemp = writeErrors = 0;
+                conflicts.Clear();
 
                 csv?.Dispose();
                 csv = null;
@@ -121,7 +127,7 @@ namespace GHelper.AiMode
                     SetStatus(active ? AiRunState.Active : AiRunState.LogOnly, "");
                 }
 
-                log($"AI: start {(active ? "regulator" : "log only")}, target {settings.Target}°C, offset {settings.Offset}°C{(settings.Explore ? ", explore" : "")}");
+                log($"AI: start {(active ? "regulator" : "log only")}, target {settings.Target}°C, offset {settings.Offset}°C, {settings.MinMhz}-{settings.TargetMhz} MHz{(settings.Explore ? ", explore" : "")}");
             }
         }
 
@@ -129,6 +135,7 @@ namespace GHelper.AiMode
         {
             Stop("restart");
             Begin(newSettings, activeMode, logDir);
+            if (initialDelayMs > 0 && active) SetStatus(AiRunState.Paused, "starting");
 
             cts = new CancellationTokenSource();
             var token = cts.Token;
@@ -144,7 +151,7 @@ namespace GHelper.AiMode
                 settings = newSettings;
                 pi.UpdateSettings(newSettings);
                 if (policy is ExplorePolicy explore) explore.UpdateSettings(newSettings);
-                log($"AI: settings target {settings.Target}°C, offset {settings.Offset}°C");
+                log($"AI: settings target {settings.Target}°C, offset {settings.Offset}°C, {settings.MinMhz}-{settings.TargetMhz} MHz");
             }
         }
 
@@ -266,20 +273,30 @@ namespace GHelper.AiMode
                     return PausedTickMs;
                 }
 
-                if (plan.LastCap is not null && plan.IsChangedExternally())
+                if ((plan.LastCap is not null || plan.LastEpp is not null) && plan.IsChangedExternally())
                 {
-                    if (++conflicts >= MaxConflicts)
+                    conflicts.Enqueue(sample.Ts);
+                    while (conflicts.Count > 0 && sample.Ts - conflicts.Peek() > ConflictWindowMs) conflicts.Dequeue();
+
+                    log($"AI: external change #{conflicts.Count}: {plan.DescribeExternalChange()}");
+
+                    if (conflicts.Count >= MaxConflicts)
                     {
-                        env.Notify("AI Mode stopped: power plan was changed by another program");
-                        log("AI: conflict, values changed externally");
+                        env.Notify("AI Mode stopped: power plan keeps being changed by another program");
+                        log("AI: conflict, values keep changing externally");
                         End("conflict");
                         stop = true;
                         return 0;
                     }
-                    Record(sample);
-                    return settings.TickMs;
+
+                    if (!plan.Rebase())
+                    {
+                        Pause("snapshot");
+                        Record(sample);
+                        return PausedTickMs;
+                    }
+                    policy.Reset();
                 }
-                conflicts = 0;
 
                 var state = new AiPlanState(plan.LastCap ?? plan.OriginalCap, plan.LastEpp ?? plan.OriginalEpp, plan.OriginalEpp);
                 var decision = policy.Decide(sample, history, state);
@@ -299,6 +316,7 @@ namespace GHelper.AiMode
 
                 sample.CapMhz = plan.LastCap;
                 sample.Epp = plan.LastEpp;
+                sample.CeilingMhz = decision.CeilingMhz;
                 sample.Zone = decision.Idle ? "idle" : decision.Zone.ToString().ToLowerInvariant();
                 sample.Policy = policy.Name;
                 Record(sample);
@@ -312,6 +330,8 @@ namespace GHelper.AiMode
                     CapMhz = plan.LastCap,
                     Epp = plan.LastEpp,
                     CpuTemp = sample.CpuTemp,
+                    CpuUtil = sample.CpuUtil,
+                    CeilingMhz = decision.CeilingMhz,
                     LogFile = csv?.CurrentFile,
                 };
                 StatusChanged?.Invoke();
@@ -341,6 +361,7 @@ namespace GHelper.AiMode
                     State = status.State,
                     Reason = status.Reason,
                     CpuTemp = sample.CpuTemp,
+                    CpuUtil = sample.CpuUtil,
                     LogFile = csv?.CurrentFile,
                 };
                 StatusChanged?.Invoke();
@@ -373,7 +394,7 @@ namespace GHelper.AiMode
             pauseReason = "";
             policy.Reset();
             history.Clear();
-            conflicts = writeErrors = 0;
+            writeErrors = 0;
             return true;
         }
 

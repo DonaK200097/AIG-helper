@@ -27,6 +27,8 @@ namespace GHelper.AiMode
         public float? PredTemp { get; set; }
 
         public int ReadMs { get; set; }
+
+        public int? CeilingMhz { get; set; }
     }
 
     public interface ISensorSource

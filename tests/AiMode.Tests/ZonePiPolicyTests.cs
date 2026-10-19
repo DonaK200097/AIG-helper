@@ -41,16 +41,55 @@ namespace AiMode.Tests
         }
 
         [Fact]
-        public void ColdZoneReachesNoLimit()
+        public void ColdZoneReachesNoLimitUnderLightLoad()
         {
             var policy = new ZonePiPolicy(settings);
             var state = new AiPlanState(5200, 30, 30);
 
-            var d = Step(policy, ref state, Sample(60));
+            var d = Step(policy, ref state, Sample(60, util: 20));
             Assert.Equal(AiPowerPlan.NoLimit, d.CapMhz);
 
-            d = Step(policy, ref state, Sample(60));
+            d = Step(policy, ref state, Sample(60, util: 20));
             Assert.Equal(AiPowerPlan.NoLimit, d.CapMhz);
+        }
+
+        [Fact]
+        public void HeavyLoadCapsAtTargetFrequencyRightAway()
+        {
+            var policy = new ZonePiPolicy(settings);
+            var state = new AiPlanState(AiPowerPlan.NoLimit, 30, 30);
+
+            var d = Step(policy, ref state, Sample(60, util: 95));
+            Assert.Equal(AiZone.Cold, d.Zone);
+            Assert.Equal(4400, d.CapMhz);
+            Assert.Equal(4400, d.CeilingMhz);
+
+            for (int i = 0; i < 5; i++) d = Step(policy, ref state, Sample(60, util: 95));
+            Assert.Equal(4400, d.CapMhz);
+        }
+
+        [Fact]
+        public void CeilingScalesWithLoad()
+        {
+            Assert.Equal(5400, settings.LoadCeiling(10));
+            Assert.Equal(5400, settings.LoadCeiling(30));
+            Assert.Equal(4900, settings.LoadCeiling(50));
+            Assert.Equal(4400, settings.LoadCeiling(70));
+            Assert.Equal(4400, settings.LoadCeiling(100));
+            Assert.Equal(4400, settings.LoadCeiling(null));
+        }
+
+        [Fact]
+        public void LoadDropRaisesCeilingGradually()
+        {
+            var policy = new ZonePiPolicy(settings);
+            var state = new AiPlanState(4400, 30, 30);
+
+            Step(policy, ref state, Sample(60, util: 95));
+            var d = Step(policy, ref state, Sample(60, util: 20));
+            // Load is smoothed: one light tick doesn't jump to no limit
+            Assert.NotEqual(AiPowerPlan.NoLimit, d.CeilingMhz);
+            Assert.True(d.CapMhz <= 4600);
         }
 
         [Fact]
@@ -154,12 +193,30 @@ namespace AiMode.Tests
         }
 
         [Fact]
-        public void CapNeverBelowMinimum()
+        public void AggressiveZoneStopsAtMinimumFrequency()
         {
             var policy = new ZonePiPolicy(settings);
-            var state = new AiPlanState(2000, 30, 30);
+            var state = new AiPlanState(3600, 30, 30);
             Step(policy, ref state, Sample(95));
-            Assert.Equal(AiPowerPlan.MinCapMhz, Step(policy, ref state, Sample(95)).CapMhz);
+            Assert.Equal(3000, Step(policy, ref state, Sample(95)).CapMhz);
+        }
+
+        [Fact]
+        public void EmergencyGoesBelowMinimumFrequency()
+        {
+            var policy = new ZonePiPolicy(settings);
+            var state = new AiPlanState(3000, 30, 30);
+            Assert.Equal(settings.EmergencyCap, Step(policy, ref state, Sample(99)).CapMhz);
+        }
+
+        [Fact]
+        public void WorkingZoneRespectsMinimumFrequency()
+        {
+            var s = new AiSettings { MinMhz = 3500 };
+            var policy = new ZonePiPolicy(s);
+            var state = new AiPlanState(3600, 30, 30);
+            for (int i = 0; i < 10; i++) Step(policy, ref state, Sample(91));
+            Assert.Equal(3500, state.CapMhz);
         }
 
         [Fact]
@@ -282,6 +339,16 @@ namespace AiMode.Tests
         public void SettingsNormalize(int target, int offset, int expectedTarget, int expectedOffset)
         {
             Assert.Equal((expectedTarget, expectedOffset), AiSettings.Normalize(target, offset));
+        }
+
+        [Theory]
+        [InlineData(3000, 4400, 3000, 4400)]
+        [InlineData(4400, 3500, 3500, 3500)]
+        [InlineData(1000, 9000, 1800, 5400)]
+        [InlineData(3049, 4451, 3000, 4500)]
+        public void FrequencyNormalize(int min, int target, int expectedMin, int expectedTarget)
+        {
+            Assert.Equal((expectedMin, expectedTarget), AiSettings.NormalizeFreq(min, target));
         }
     }
 }

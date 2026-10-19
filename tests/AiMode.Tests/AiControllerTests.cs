@@ -135,22 +135,83 @@ namespace AiMode.Tests
         }
 
         [Fact]
-        public void ExternalChangeStopsAfterThreeTicks()
+        public void SingleExternalChangeIsAdopted()
         {
             Begin();
             sensors.Temp = 95;
             controller.Tick();
 
-            power.AC[(Scheme, FREQ_MAX)] = 4321;
+            // Someone sets EPP once (e.g. firmware after a mode switch)
+            power.AC[(Scheme, EPP)] = 55;
+            power.AC[(Scheme, EPP_1)] = 55;
+            for (int i = 0; i < 5; i++) controller.Tick();
+
+            Assert.Equal(AiRunState.Active, controller.Status.State);
+            Assert.Empty(env.Notes);
+            Assert.Equal(55, plan.OriginalEpp);
+
+            controller.Stop("test");
+            Assert.Equal(55u, power.ReadAC(Scheme, GUID_CPU, EPP));
+            Assert.Equal(0u, Cap);
+        }
+
+        [Fact]
+        public void SchemeSwitchRestoresOldSchemeAndFollowsNewOne()
+        {
+            var other = new Guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+            foreach (var s in new[] { FREQ_MAX, FREQ_MAX_1 }) { power.AC[(other, s)] = 0; power.DC[(other, s)] = 0; }
+            foreach (var s in new[] { EPP, EPP_1 }) { power.AC[(other, s)] = 20; power.DC[(other, s)] = 20; }
+
+            Begin();
+            sensors.Temp = 95;
+            controller.Tick();
+            Assert.NotEqual(0u, Cap);
+
+            power.Active = other;
             controller.Tick();
             controller.Tick();
-            controller.Tick(out bool stop);
+
+            Assert.Equal(AiRunState.Active, controller.Status.State);
+            Assert.Equal(0u, Cap);
+            Assert.Equal(other, plan.Snapshot!.Scheme);
+            Assert.NotEqual(0u, power.ReadAC(other, GUID_CPU, FREQ_MAX));
+        }
+
+        [Fact]
+        public void RepeatedExternalChangesStop()
+        {
+            Begin();
+            sensors.Temp = 95;
+            controller.Tick();
+
+            bool stop = false;
+            for (int i = 0; i < 10 && !stop; i++)
+            {
+                power.AC[(Scheme, FREQ_MAX)] = 4321;
+                controller.Tick(out stop);
+            }
 
             Assert.True(stop);
             Assert.Equal(AiRunState.Stopped, controller.Status.State);
             Assert.Equal("conflict", controller.Status.Reason);
             Assert.Single(env.Notes);
-            Assert.Equal(0u, Cap);
+        }
+
+        [Fact]
+        public void SparseExternalChangesDontStop()
+        {
+            Begin();
+            sensors.Temp = 95;
+            controller.Tick();
+
+            for (int i = 0; i < 5; i++)
+            {
+                power.AC[(Scheme, FREQ_MAX)] = 4321;
+                controller.Tick();
+                sensors.Ts += AiController.ConflictWindowMs;
+            }
+
+            Assert.Equal(AiRunState.Active, controller.Status.State);
         }
 
         [Fact]
